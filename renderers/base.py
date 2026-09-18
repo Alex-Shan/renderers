@@ -984,6 +984,8 @@ MODEL_RENDERER_MAP: dict[str, str] = {
     "zai-org/GLM-5-FP8": "glm-5",
     "zai-org/GLM-4.7-Flash": "glm-5",
     "zai-org/GLM-5.1": "glm-5.1",
+    "zai-org/GLM-5.3": "glm-5.3",
+    "zai-org/GLM-5.3-BF16": "glm-5.3",
     # GLM-4.5.
     "THUDM/GLM-4.5-Air": "glm-4.5",
     "zai-org/GLM-4.5-Air": "glm-4.5",
@@ -1318,10 +1320,10 @@ def _populate_registry():
     from renderers.deepseek_v3 import DeepSeekV3Renderer
     from renderers.deepseek_v4 import DeepSeekV4Renderer
     from renderers.default import DefaultRenderer
-    from renderers.glm5 import GLM5Renderer, GLM51Renderer
+    from renderers.gemma4 import Gemma4Renderer
+    from renderers.glm5 import GLM5Renderer, GLM51Renderer, GLM53Renderer
     from renderers.glm45 import GLM45Renderer
     from renderers.gpt_oss import GptOssRenderer
-    from renderers.gemma4 import Gemma4Renderer
     from renderers.hy3 import Hy3Renderer
     from renderers.inkling import InklingRenderer
     from renderers.kimi_k2 import KimiK2Renderer
@@ -1358,6 +1360,7 @@ def _populate_registry():
             "qwen3.8": Qwen38Renderer,
             "glm-5": GLM5Renderer,
             "glm-5.1": GLM51Renderer,
+            "glm-5.3": GLM53Renderer,
             "glm-4.5": GLM45Renderer,
             "minimax-m2": MiniMaxM2Renderer,
             "deepseek-v3": DeepSeekV3Renderer,

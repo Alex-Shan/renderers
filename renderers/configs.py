@@ -411,6 +411,29 @@ class GLM51RendererConfig(BaseRendererConfig):
         return self
 
 
+class GLM53RendererConfig(BaseRendererConfig):
+    """GLM-5.3 renderer config."""
+
+    name: Literal["glm-5.3"] = "glm-5.3"
+    _template_fields = frozenset({"clear_thinking", "reasoning_effort"})
+
+    clear_thinking: bool = False
+    """Drop reasoning from historical assistant turns when ``True``."""
+
+    reasoning_effort: Literal["low", "high", "max"] = "max"
+    """Reasoning-effort system preamble emitted by the canonical template."""
+
+    @model_validator(mode="after")
+    def _check_thinking_retention(self):
+        _reject_thinking_retention_conflict(
+            self,
+            "clear_thinking",
+            true_implies="tool_cycle",
+            false_implies="all",
+        )
+        return self
+
+
 class GLM45RendererConfig(BaseRendererConfig):
     """GLM-4.5 Air renderer config."""
 
@@ -984,6 +1007,7 @@ RendererConfig = Annotated[
         Gemma4RendererConfig,
         GLM5RendererConfig,
         GLM51RendererConfig,
+        GLM53RendererConfig,
         GLM45RendererConfig,
         GptOssRendererConfig,
         Hy3RendererConfig,
@@ -1031,6 +1055,7 @@ _CONFIG_BY_NAME: dict[str, type[BaseRendererConfig]] = {
     "gemma4": Gemma4RendererConfig,
     "glm-5": GLM5RendererConfig,
     "glm-5.1": GLM51RendererConfig,
+    "glm-5.3": GLM53RendererConfig,
     "glm-4.5": GLM45RendererConfig,
     "gpt-oss": GptOssRendererConfig,
     "hy3": Hy3RendererConfig,
@@ -1056,8 +1081,7 @@ def _config_class_for(name: str) -> type[BaseRendererConfig]:
     cls = _CONFIG_BY_NAME.get(name)
     if cls is None:
         raise ValueError(
-            f"No renderer config registered for name={name!r}. "
-            f"Known: {sorted(_CONFIG_BY_NAME)}"
+            f"No renderer config registered for name={name!r}. Known: {sorted(_CONFIG_BY_NAME)}"
         )
     return cls
 
@@ -1085,6 +1109,7 @@ __all__ = [
     "DeepSeekV4RendererConfig",
     "GLM45RendererConfig",
     "GLM51RendererConfig",
+    "GLM53RendererConfig",
     "GLM5RendererConfig",
     "Gemma4RendererConfig",
     "GptOssRendererConfig",
