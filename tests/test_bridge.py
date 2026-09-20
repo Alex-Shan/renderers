@@ -204,6 +204,22 @@ def test_bridge_extension_includes_new_message_text(
         f"{br_model}: new-message content missing from extension; got {decoded!r}"
     )
 
+def test_qwen3_renders_openai_text_content_parts(br_renderer, br_tokenizer, br_model):
+    """ACP/OpenAI text blocks must not become an empty user turn."""
+    if br_model not in {"Qwen/Qwen3-8B", "Qwen/Qwen3-4B"}:
+        pytest.skip(f"{br_model}: not a Qwen3 text renderer")
+
+    text = "CONTENT_LIST_SENTINEL_XYZ"
+    string_ids = br_renderer.render_ids(
+        [{"role": "user", "content": text}], add_generation_prompt=True
+    )
+    list_ids = br_renderer.render_ids(
+        [{"role": "user", "content": [{"type": "text", "text": text}]}],
+        add_generation_prompt=True,
+    )
+
+    assert list_ids == string_ids
+    assert text in br_tokenizer.decode(list_ids, skip_special_tokens=False)
 
 def test_bridge_declines_across_user_query_when_template_drops_thinking():
     """Qwen3's template drops a past block's thinking once a new user turn
