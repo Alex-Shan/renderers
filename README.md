@@ -32,6 +32,10 @@ only when image or audio content is actually rendered.
 git tag renderers-v0.1.12
 git push origin renderers-v0.1.12
 
+git tag -f renderers-v0.1.12 HEAD
+git push -f origin renderers-v0.1.12
+
+
 ```python
 from renderers import create_renderer
 from renderers.base import load_tokenizer
