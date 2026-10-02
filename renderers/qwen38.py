@@ -49,11 +49,40 @@ class Qwen38Renderer(Qwen36Renderer):
         return True
 
     @staticmethod
+    def _content_text(content) -> str:
+        """Return text parts in the renderer-safe form used by Qwen3."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            return "".join(parts)
+        return ""
+
+    @staticmethod
+    def _query_boundary_text(content) -> str:
+        return Qwen38Renderer._content_text(content).strip()
+
+    @staticmethod
+    def _is_user_query_message(msg: Message) -> bool:
+        if msg.get("role") != "user":
+            return False
+        content = Qwen38Renderer._query_boundary_text(msg.get("content"))
+        return not (
+            content.startswith("<tool_response>")
+            and content.endswith("</tool_response>")
+        )
+
+    @staticmethod
     def _last_query_index(messages: list[Message]) -> int:
-        last_query_index = Qwen35Renderer._last_query_index(messages)
-        if last_query_index == len(messages):
-            raise ValueError("No user query found in messages.")
-        return last_query_index
+        for i in range(len(messages) - 1, -1, -1):
+            if Qwen38Renderer._is_user_query_message(messages[i]):
+                return i
+        raise ValueError("No user query found in messages.")
 
     @staticmethod
     def _extract_assistant_parts(msg: Message, content: str) -> tuple[str, str]:
