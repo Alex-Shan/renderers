@@ -14,10 +14,13 @@ argument serialization, with three template changes:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 from renderers.base import Message
 from renderers.configs import Qwen38RendererConfig
-from renderers.qwen35 import Qwen35Renderer
 from renderers.qwen36 import Qwen36Renderer
+from renderers.qwen3_vl import _is_image_part, _is_video_part
 
 
 _REASONING_INSTRUCTIONS = {
@@ -49,29 +52,23 @@ class Qwen38Renderer(Qwen36Renderer):
         return True
 
     @staticmethod
-    def _content_text(content) -> str:
-        """Return text parts in the renderer-safe form used by Qwen3."""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-            return "".join(parts)
-        return ""
-
-    @staticmethod
-    def _query_boundary_text(content) -> str:
-        return Qwen38Renderer._content_text(content).strip()
+    def _iter_content_parts(content: list[Any]) -> Iterable[Any]:
+        """Keep media and string-valued text in every rendering path."""
+        for item in content:
+            if isinstance(item, str):
+                yield item
+            elif isinstance(item, dict) and (
+                _is_image_part(item)
+                or _is_video_part(item)
+                or isinstance(item.get("text"), str)
+            ):
+                yield item
 
     @staticmethod
     def _is_user_query_message(msg: Message) -> bool:
         if msg.get("role") != "user":
             return False
-        content = Qwen38Renderer._query_boundary_text(msg.get("content"))
+        content = Qwen38Renderer._render_content(msg.get("content")).strip()
         return not (
             content.startswith("<tool_response>")
             and content.endswith("</tool_response>")
