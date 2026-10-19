@@ -5,6 +5,7 @@ import json
 import httpx
 import numpy as np
 import pytest
+
 from renderers import MalformedGenerateResponseError
 from renderers.base import (
     ParsedResponse,
@@ -115,7 +116,6 @@ def test_parse_generate_response_preserves_multiple_compact_choices(separators):
     choices.append(_compact_choice({"logprobs": {"content": []}}))
     payload = parse_generate_response(
         json.dumps({"choices": choices}, separators=separators).encode(),
-        compact_logprobs=True,
     )
     for i, choice in zip((7, 8), payload["choices"]):
         assert _parse_compact_logprobs(choice, [i], None) == ([-0.5], None, None)
@@ -159,38 +159,21 @@ def test_top_logprobs_head_is_independent_of_sampled_action(
         _parse_test_head({"logprobs": {"content": [entry]}}, [sampled], 2, compact)
 
 
-@pytest.mark.parametrize("sampled", [1, 2, 3])
-@pytest.mark.parametrize("capture_size", [2, 4])
 @pytest.mark.parametrize("compact", [False, True])
-def test_top_logprobs_preserve_complete_replay_support(sampled, capture_size, compact):
-    import math
-
-    probabilities = {1: 0.6, 2: 0.2, 3: 0.2}
+def test_top_logprobs_preserve_filtered_candidates(compact):
     entry = {
-        "token": f"token_id:{sampled}",
-        "logprob": math.log(probabilities[sampled]),
+        "token": "token_id:1",
+        "logprob": -0.5,
         "top_logprobs": [
-            {"token": f"token_id:{i}", "logprob": math.log(probabilities[i])}
-            for i in [sampled, *[v for v in probabilities if v != sampled]]
-        ]
-        + [{"token": "token_id:4", "logprob": -9999.0}],
+            {"token": f"token_id:{i}", "logprob": p}
+            for i, p in [(1, -0.5), (2, -2.0), (3, -9999.0)]
+        ],
     }
-    choice = {"logprobs": {"content": [entry]}, "sampling_mask": [[3, 1, 2]]}
-    ids, logprobs = _parse_test_head(choice, [sampled], capture_size, compact)
-    assert ids == [[1, 2, 3]]
-    np.testing.assert_allclose(np.exp(logprobs), [[0.6, 0.2, 0.2]])
-
-    choice["sampling_mask"] = [[1, 2, 3, 4]]
-    with pytest.raises(
-        MalformedGenerateResponseError, match="Missing sampling-support"
-    ):
-        _parse_test_head(choice, [sampled], capture_size, compact)
-    choice["sampling_mask"] = [[1, 2, 3, 3]]
-    with pytest.raises(MalformedGenerateResponseError, match="Invalid recorded"):
-        _parse_test_head(choice, [sampled], capture_size, compact)
-    choice["sampling_mask"] = [[sampled]]
-    with pytest.raises(MalformedGenerateResponseError, match="must normalize"):
-        _parse_test_head(choice, [sampled], capture_size, compact)
+    choice = {"logprobs": {"content": [entry]}}
+    assert _parse_test_head(choice, [1], 1, compact) == ([[1]], [[-0.5]])
+    entry["top_logprobs"][0]["logprob"] = -0.6
+    with pytest.raises(MalformedGenerateResponseError, match="disagree"):
+        _parse_test_head(choice, [1], 1, compact)
 
 
 class _FakeRenderer:
@@ -369,8 +352,6 @@ def test_generate_builds_request_body_and_parses_response(usage, head_size, tran
             "logprobs": head_size + 2 if head_size is not None else 1,
             **(
                 {
-                    "flat_logprobs": True,
-                    "detokenize": False,
                     "extra_args": {"prl_compact_logprobs": True},
                 }
                 if head_size
@@ -555,6 +536,33 @@ def test_generate_preserves_zero_completion_logprob():
     assert result["completion_logprobs"] == [0.0, -0.2]
 
 
+def test_generate_reads_packed_completion_logprobs():
+    client = _FakeClient()
+    client.choice.pop("logprobs")
+    values = np.array([-0.1, 0.0], dtype=np.float32)
+    client.choice["completion_logprobs"] = {
+        "data": base64.b64encode(values.tobytes()).decode(),
+        "shape": [2],
+        "dtype": "float32",
+    }
+
+    result = _run_generate(client)
+
+    assert result["completion_logprobs"] == values.tolist()
+
+    client.choice["completion_logprobs"]["data"] = base64.b64encode(
+        np.array([-0.1, -9999.0], dtype=np.float32).tobytes()
+    ).decode()
+    with pytest.raises(MalformedGenerateResponseError, match="missing"):
+        _run_generate(client)
+
+    client.choice["completion_logprobs"]["data"] = base64.b64encode(
+        np.array([-0.1, np.inf], dtype=np.float32).tobytes()
+    ).decode()
+    with pytest.raises(MalformedGenerateResponseError, match="non-finite"):
+        _run_generate(client)
+
+
 class _MalformedToolRenderer(_FakeRenderer):
     """Returns only a malformed tool-call attempt — finish_reason must stay "stop"."""
 
@@ -686,6 +694,7 @@ def test_generate_serializes_multimodal_features_for_qwen_vl_family(
     pytest.importorskip("vllm", reason="vllm needed for features serialization")
 
     import torch as _torch
+
     from renderers.base import (
         MultiModalData,
         PlaceholderRange,
@@ -762,6 +771,7 @@ def test_generate_serializes_multimodal_features_for_gemma4():
     pytest.importorskip("vllm", reason="vllm needed for features serialization")
 
     import torch as _torch
+
     from renderers.base import MultiModalData, PlaceholderRange, load_tokenizer
     from renderers.gemma4 import Gemma4Renderer
 
@@ -819,13 +829,14 @@ def test_generate_serializes_nemotron_dynamic_image_features():
     pytest.importorskip("torch")
     pytest.importorskip("vllm", reason="vllm needed for features serialization")
 
-    from renderers.base import MultiModalData, PlaceholderRange
-    from renderers.nemotron3 import Nemotron35Renderer
     from vllm.entrypoints.scale_out.token_in_token_out.mm_serde import (
         decode_mm_kwargs_item,
     )
     from vllm.model_executor.models.nano_nemotron_vl import NemotronH_Nano_VL_V2
     from vllm.multimodal.inputs import MultiModalKwargsItems
+
+    from renderers.base import MultiModalData, PlaceholderRange
+    from renderers.nemotron3 import Nemotron35Renderer
 
     class _FakeNemotronRenderer(Nemotron35Renderer):
         def get_stop_token_ids(self):
