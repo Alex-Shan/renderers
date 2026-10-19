@@ -164,6 +164,45 @@ def test_top_logprobs_head_is_independent_of_sampled_action(
 
 
 @pytest.mark.parametrize("compact", [False, True])
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("error", [None, "missing", "mass", "mask"])
+def test_top_logprobs_preserve_complete_replay_support(compact, packed, error):
+    import math
+
+    probabilities = {1: 0.6, 2: 0.2, 3: 0.2}
+    if error == "mass":
+        probabilities[1] = 0.5
+    entry = {
+        "token": "token_id:3",
+        "logprob": math.log(probabilities[3]),
+        "top_logprobs": [
+            {"token": f"token_id:{i}", "logprob": math.log(p)}
+            for i, p in probabilities.items()
+            if error != "missing" or i != 2
+        ],
+    }
+    support = [1, 2] if error == "mask" else [3, 1, 2]
+    mask = [support]
+    if packed:
+        mask = {
+            name: {
+                "data": base64.b64encode(np.asarray(values, dtype=np.int32)).decode(),
+                "shape": [len(values)],
+                "dtype": "int32",
+            }
+            for name, values in (("ids", support), ("counts", [len(support)]))
+        }
+    choice = {"logprobs": {"content": [entry]}, "sampling_mask": mask}
+    if error is not None:
+        with pytest.raises(MalformedGenerateResponseError):
+            _parse_test_head(choice, [3], 2, compact)
+    else:
+        ids, logprobs = _parse_test_head(choice, [3], 2, compact)
+        assert ids == [[1, 2, 3]]
+        np.testing.assert_allclose(np.exp(logprobs), [[0.6, 0.2, 0.2]])
+
+
+@pytest.mark.parametrize("compact", [False, True])
 def test_top_logprobs_preserve_filtered_candidates(compact):
     entry = {
         "token": "token_id:1",

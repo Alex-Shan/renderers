@@ -201,7 +201,10 @@ def _parse_compact_logprobs(
     sampled = []
     top_ids: list[list[int]] = []
     top_logprobs: list[list[float]] = []
-    for token_id, start, end in zip(completion_ids, offsets, offsets[1:]):
+    supports = _parse_sampling_mask(choice, completion_ids) if k is not None else None
+    for index, (token_id, start, end) in enumerate(
+        zip(completion_ids, offsets, offsets[1:])
+    ):
         # FlatLogprobs can repeat the sampled ID. Match vLLM's dict order/value semantics.
         items = list(zip(ids[start:end].tolist(), values[start:end].tolist()))
         row = dict(items)
@@ -219,6 +222,7 @@ def _parse_compact_logprobs(
                 token_id,
                 row[token_id],
                 k,
+                supports[index] if supports is not None else None,
             )
             top_ids.append(selected_ids)
             top_logprobs.append(selected_logprobs)
@@ -296,13 +300,57 @@ def _parse_completion_logprobs(
     return completion_logprobs
 
 
+def _parse_sampling_mask(
+    choice: Mapping[str, Any], completion_ids: list[int]
+) -> list[list[int]] | None:
+    mask = choice.get("sampling_mask")
+    if mask is None:
+        return None
+    if isinstance(mask, Mapping):
+        arrays = {}
+        for name in ("ids", "counts"):
+            packed = mask.get(name)
+            if not isinstance(packed, Mapping) or packed.get("dtype") != "int32":
+                raise MalformedGenerateResponseError("Invalid packed sampling mask")
+            try:
+                values = np.frombuffer(
+                    base64.b64decode(packed["data"], validate=True), dtype=np.int32
+                )
+            except (KeyError, TypeError, ValueError, binascii.Error) as exc:
+                raise MalformedGenerateResponseError(
+                    "Invalid packed sampling mask"
+                ) from exc
+            if packed.get("shape") != [len(values)] or (values < 0).any():
+                raise MalformedGenerateResponseError("Invalid packed sampling mask")
+            arrays[name] = values
+        counts, ids = arrays["counts"], arrays["ids"]
+        if len(counts) != len(completion_ids) or int(counts.sum()) != len(ids):
+            raise MalformedGenerateResponseError("Sampling mask token count mismatch")
+        mask = [row.tolist() for row in np.split(ids, np.cumsum(counts)[:-1])]
+        if not len(counts):
+            mask = []
+    if not isinstance(mask, list) or len(mask) != len(completion_ids):
+        raise MalformedGenerateResponseError("Sampling mask token count mismatch")
+    for sampled, support in zip(completion_ids, mask, strict=True):
+        if (
+            not isinstance(support, list)
+            or not support
+            or any(type(i) is not int or i < 0 for i in support)
+            or len(set(support)) != len(support)
+            or sampled not in support
+        ):
+            raise MalformedGenerateResponseError("Invalid recorded sampling support")
+    return mask
+
+
 def _select_sampler_head(
     head: dict[int, float],
     sampled_id: int,
     sampled_logprob: float,
     k: int,
+    support: list[int] | None = None,
 ) -> tuple[list[int], list[float]]:
-    """Keep a top-k head independent of the sampled action, excluding cutoff ties."""
+    """Keep an action-independent head, or the complete recorded replay support."""
     if sampled_id in head and not math.isclose(
         head[sampled_id], sampled_logprob, rel_tol=1e-6, abs_tol=1e-5
     ):
@@ -314,14 +362,27 @@ def _select_sampler_head(
         ((i, p) for i, p in head.items() if p != VLLM_LOGPROB_SENTINEL),
         key=lambda x: (-x[1], x[0]),
     )
-    if len(ranked) > k and ranked[k - 1][1] == ranked[k][1]:
+    if support is not None:
+        support_set = set(support)
+        if not support_set.issubset(i for i, _ in ranked):
+            raise MalformedGenerateResponseError(
+                "Missing sampling-support probabilities"
+            )
+        ranked = [(i, p) for i, p in ranked if i in support_set]
+        if not math.isclose(
+            math.fsum(math.exp(p) for _, p in ranked), 1.0, rel_tol=0, abs_tol=1e-4
+        ):
+            raise MalformedGenerateResponseError(
+                "Sampler probabilities must normalize over the recorded support"
+            )
+    elif len(ranked) > k and ranked[k - 1][1] == ranked[k][1]:
         boundary = ranked[k][1]
         ranked = [(i, p) for i, p in ranked if p > boundary]
     else:
         ranked = ranked[:k]
     if not ranked or math.fsum(math.exp(p) for _, p in ranked) > 1.0001:
         raise MalformedGenerateResponseError("Invalid sampler head probability mass")
-    if len(head) < k + 2:
+    if support is None and len(head) < k + 2:
         raise MalformedGenerateResponseError(
             "Engine returned fewer top logprobs than requested"
         )
@@ -338,7 +399,10 @@ def _parse_completion_top_logprobs(
         raise MalformedGenerateResponseError("Missing requested top logprobs")
     top_ids: list[list[int]] = []
     top_logprobs: list[list[float]] = []
-    for sampled_id, entry in zip(completion_ids, content, strict=True):
+    supports = _parse_sampling_mask(choice, completion_ids)
+    for index, (sampled_id, entry) in enumerate(
+        zip(completion_ids, content, strict=True)
+    ):
         candidates = entry.get("top_logprobs")
         if not isinstance(candidates, list) or not candidates:
             raise MalformedGenerateResponseError("Missing requested top logprobs")
@@ -368,6 +432,7 @@ def _parse_completion_top_logprobs(
             sampled_id,
             entry["logprob"],
             k,
+            supports[index] if supports is not None else None,
         )
         top_ids.append(selected_ids)
         top_logprobs.append(selected_logprobs)
