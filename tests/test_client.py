@@ -27,7 +27,11 @@ def _compact_choice(choice):
     for entry in entries:
         # Flat vLLM storage retains the sampled token even when it repeats in top-k.
         for candidate in [entry, *entry.get("top_logprobs", [])]:
-            ids.append(int(candidate["token"].removeprefix("token_id:")))
+            ids.append(
+                candidate["token_id"]
+                if "token_id" in candidate
+                else int(candidate["token"].removeprefix("token_id:"))
+            )
             values.append(candidate["logprob"])
         offsets.append(len(ids))
     raw = (
@@ -293,7 +297,10 @@ def _run_generate(client, renderer=None):
 )
 @pytest.mark.parametrize("head_size", [None, 2])
 @pytest.mark.parametrize("transport", ["native", "compact", "opt_out"])
-def test_generate_builds_request_body_and_parses_response(usage, head_size, transport):
+@pytest.mark.parametrize("numeric_ids", [False, True])
+def test_generate_builds_request_body_and_parses_response(
+    usage, head_size, transport, numeric_ids
+):
     client = _FakeClient()
     client.usage = usage
     renderer = _FakeRenderer()
@@ -307,6 +314,10 @@ def test_generate_builds_request_body_and_parses_response(usage, head_size, tran
                 {"token": "token_id:21", "logprob": -5.0},
                 {"token": "token_id:22", "logprob": -6.0},
             ]
+    if numeric_ids:
+        for entry in client.choice["logprobs"]["content"]:
+            for candidate in [entry, *entry.get("top_logprobs", [])]:
+                candidate["token_id"] = int(candidate.pop("token")[9:])
     extra_args = (
         {"prl_compact_logprobs": False, "custom_arg": 7}
         if transport == "opt_out"
@@ -516,9 +527,20 @@ def test_generate_rejects_vllm_missing_logprob_sentinel():
         _run_generate(client)
 
 
-def test_generate_rejects_logprob_token_id_mismatch():
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"token": "token_id:8"},
+        {"token_id": 8},
+        {"token_id": True},
+        {"token_id": -1},
+        {"token_id": "7"},
+        {"token_id": None},
+    ],
+)
+def test_generate_rejects_logprob_token_id_mismatch(identity):
     client = _FakeClient()
-    client.choice["logprobs"]["content"][0]["token"] = "token_id:8"
+    client.choice["logprobs"]["content"][0].update(identity)
 
     with pytest.raises(
         MalformedGenerateResponseError,

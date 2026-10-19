@@ -229,6 +229,16 @@ def _parse_compact_logprobs(
     )
 
 
+def _logprob_token_id(entry: Mapping[str, Any]) -> int | None:
+    if "token_id" in entry:
+        token_id = entry["token_id"]
+        return token_id if type(token_id) is int and token_id >= 0 else None
+    token = entry.get("token")
+    if isinstance(token, str) and token.startswith("token_id:") and token[9:].isdigit():
+        return int(token[9:])
+    return None
+
+
 def _parse_completion_logprobs(
     choice: Mapping[str, Any], completion_ids: list[int]
 ) -> list[float]:
@@ -259,7 +269,7 @@ def _parse_completion_logprobs(
                 f"Engine response choice.logprobs.content[{index}] must be an object."
             )
         expected_token = f"token_id:{completion_ids[index]}"
-        if entry.get("token") != expected_token:
+        if _logprob_token_id(entry) != completion_ids[index]:
             raise MalformedGenerateResponseError(
                 f"Engine response choice.logprobs.content[{index}].token must be {expected_token!r}."
             )
@@ -336,15 +346,12 @@ def _parse_completion_top_logprobs(
         for candidate in candidates:
             if not isinstance(candidate, Mapping):
                 raise MalformedGenerateResponseError("Top logprob must be an object")
-            token, logprob = candidate.get("token"), candidate.get("logprob")
-            if (
-                not isinstance(token, str)
-                or not token.startswith("token_id:")
-                or not token[9:].isdigit()
-            ):
+            token_id = _logprob_token_id(candidate)
+            if token_id is None:
                 raise MalformedGenerateResponseError(
-                    "Top logprob token must be token_id:<nonnegative integer>"
+                    "Top logprob must identify a nonnegative token id"
                 )
+            logprob = candidate.get("logprob")
             if (
                 isinstance(logprob, bool)
                 or not isinstance(logprob, (int, float))
@@ -353,7 +360,6 @@ def _parse_completion_top_logprobs(
                 raise MalformedGenerateResponseError("Top logprob must be finite")
             if logprob > 1e-6:
                 raise MalformedGenerateResponseError("Top logprob cannot be positive")
-            token_id = int(token[9:])
             if token_id in head:
                 raise MalformedGenerateResponseError("Duplicate top logprob token id")
             head[token_id] = float(logprob)
