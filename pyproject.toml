@@ -8,7 +8,8 @@ name = "renderers"
 # Untagged commits get PEP 440 dev versions like ``0.1.8.dev3+g4c877be4``
 # so any commit is uniquely installable; tagged commits get clean
 # release versions like ``0.1.8``.
-dynamic = ["version"]
+# dynamic = ["version"]
+version = "0.1.2026"
 description = "Chat template renderers — deterministic message-to-token conversion for LLM training"
 readme = "README.md"
 license = "Apache-2.0"
