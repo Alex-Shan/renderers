@@ -592,9 +592,21 @@ class Qwen35Renderer:
             content = self._render_content(msg.get("content")).strip()
 
             if role == "system":
-                if i != 0:
-                    raise ValueError("System message must be at the beginning.")
-                continue  # Already handled above
+                if i == 0:
+                    continue  # Already handled above
+
+                # Qwen chat templates only support a system role at the start
+                # of the conversation. Preserve a later system/developer
+                # message at its original position as a user turn, matching
+                # the renderer's handling of post-initial system messages in
+                # incremental bridges.
+                emit_special(self._im_start, i, is_sampled=False, is_content=False)
+                user_segments: list[tuple[str, bool]] = [("user\n", False)]
+                if content:
+                    user_segments.append((content, True))
+                emit_text_segments(user_segments, i, is_sampled=False)
+                emit_special(self._im_end, i, is_sampled=False, is_content=False)
+                emit_text("\n", i, is_sampled=False, is_content=False)
 
             elif role == "user":
                 raw_content = msg.get("content")
@@ -919,11 +931,14 @@ class Qwen35Renderer:
                     emit_special(self._im_end, i)
                     emit_text("\n", i)
             elif role == "system":
+                # Every bridge message extends an existing conversation, so
+                # a system message here is necessarily post-initial. Render it
+                # as a user turn, as in the full-render path above.
                 emit_special(self._im_start, i)
-                sys_segments: list[tuple[str, bool]] = [("system\n", False)]
+                user_segments: list[tuple[str, bool]] = [("user\n", False)]
                 if content:
-                    sys_segments.append((content, True))
-                emit_text_segments(sys_segments, i)
+                    user_segments.append((content, True))
+                emit_text_segments(user_segments, i)
                 emit_special(self._im_end, i)
                 emit_text("\n", i)
             elif role == "tool":
