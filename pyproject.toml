@@ -4,12 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "renderers"
-# Derived from git tags by hatch-vcs (see [tool.hatch.version] below).
-# Untagged commits get PEP 440 dev versions like ``0.1.8.dev3+g4c877be4``
-# so any commit is uniquely installable; tagged commits get clean
-# release versions like ``0.1.8``.
-# dynamic = ["version"]
-version = "0.1.2026"
+version = "0.2.2026"
 description = "Chat template renderers — deterministic message-to-token conversion for LLM training"
 readme = "README.md"
 license = "Apache-2.0"
@@ -140,3 +135,9 @@ invalid-key = "warn"
 unsupported-operator = "warn"
 invalid-return-type = "warn"
 invalid-assignment = "warn"
+
+[tool.pytest.ini_options]
+markers = [
+    "model: requires real tokenizer or processor assets at pinned revisions",
+    "multimodal: exercises real image/audio/video processors or model sidecars",
+]
